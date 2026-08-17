@@ -58,10 +58,19 @@ int launch_matrix_mul(const float* h_A, const float* h_B, float* h_C, int N) {
 
     matrix_mul_tiled_kernel<<<dimGrid, dimBlock>>>(d_A, d_B, d_C, N);
 
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+        return -4;
+    }
+
     cudaMemcpy(h_C, d_C, bytes, cudaMemcpyDeviceToHost);
 
-    cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+
     return 0;
 }
 
-} // extern "C"
+}

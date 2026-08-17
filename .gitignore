@@ -1,0 +1,10 @@
+# Build artifacts
+build/
+*.so
+*.o
+
+# Test & Cache files
+.pytest_cache/
+__pycache__/
+*.pyc
+.DS_Store

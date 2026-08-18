@@ -105,11 +105,3 @@ All kernels within throughput thresholds.
 `vector_add` hits 82% of T4 peak bandwidth — expected for a purely memory-bound kernel. `reduce_sum` at 107 GB/s reflects the cost of the two-phase design; a CUB-backed reduction keeps partial sums on-device and gets closer to 250 GB/s. `matrix_mul` bandwidth is intentionally low — naive GEMM has poor arithmetic intensity and that's fine here; the point of this kernel is correctness at N=257, not peak FLOPS.
 
 ---
-
-## What's next
-
-- FP16 kernel variants with tolerance-aware comparison against FP32 reference
-- Online softmax for sequences longer than 1024 (multi-block, single-pass)
-- `nvtx` range markers for Nsight Systems timeline visibility
-- Parallel reduction kernel (warp-level max) and convolution correctness tests
-- GitHub Actions CI with a GPU-enabled runner

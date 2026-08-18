@@ -36,13 +36,13 @@ gpu-correctness-harness/
 
 ## Kernels and what they test
 
-**vector_add** — the baseline. Tests at `N=1`, `N=1000` (non-power-of-two), and `N=256` (exact block boundary). The boundary case is the one that matters: off-by-one in ceiling division silently drops the last element with no error message.
+**vector_add** : The baseline. Tests at `N=1`, `N=1000` (non-power-of-two), and `N=256` (exact block boundary). The boundary case is the one that matters: off-by-one in ceiling division silently drops the last element with no error message.
 
-**matrix_mul** — naive tiled GEMM, parameterized over `[16, 32, 64, 128, 257]`. The 257 case deliberately crosses the 256-thread tile boundary. Index math that looks correct at power-of-two sizes often breaks here.
+**matrix_mul** : Naive tiled GEMM, parameterized over `[16, 32, 64, 128, 257]`. The 257 case deliberately crosses the 256-thread tile boundary. Index math that looks correct at power-of-two sizes often breaks here.
 
-**reduction** — parallel sum using shared-memory tree reduction + `__shfl_down_sync` for the final warp. The warp-shuffle avoids unnecessary `__syncthreads` calls and shared memory bank conflicts in the last 32 lanes. Writing this kernel and its tests surfaced a real bug: the tree was stopping at `s > 32` instead of `s >= 32`, leaving 64 values where only 32 were being read by the warp — every result came back exactly half the correct answer. The N=256 boundary test caught it on the first run.
+**reduction** : Parallel sum using shared-memory tree reduction + `__shfl_down_sync` for the final warp. The warp-shuffle avoids unnecessary `__syncthreads` calls and shared memory bank conflicts in the last 32 lanes. Writing this kernel and its tests surfaced a real bug: the tree was stopping at `s > 32` instead of `s >= 32`, leaving 64 values where only 32 were being read by the warp — every result came back exactly half the correct answer. The N=256 boundary test caught it on the first run.
 
-**softmax** — two-pass numerically stable implementation. Pass 1 computes `max(x)` via shared-memory reduction. Pass 2 computes `exp(x[i] - max)` and normalizes. The test `test_numerical_stability_large_values` passes `[1000.0, 1001.0, 1002.0]` — inputs that cause `exp(1000)` to overflow to `inf` in FP32, making naive softmax return NaN. Testing this also uncovered a second bug: launching with `threads = N` for small N breaks tree reduction when N isn't a power of 2 (with `N=3`, `blockDim.x/2 = 1`, so `smem[2]` is never compared and the kernel reports the wrong max). Fixed by always launching 256 threads and using strided loops — inactive threads contribute `-FLT_MAX` and `0.0`, which are identity values for max and sum.
+**softmax** : Two-pass numerically stable implementation. Pass 1 computes `max(x)` via shared-memory reduction. Pass 2 computes `exp(x[i] - max)` and normalizes. The test `test_numerical_stability_large_values` passes `[1000.0, 1001.0, 1002.0]` — inputs that cause `exp(1000)` to overflow to `inf` in FP32, making naive softmax return NaN. Testing this also uncovered a second bug: launching with `threads = N` for small N breaks tree reduction when N isn't a power of 2 (with `N=3`, `blockDim.x/2 = 1`, so `smem[2]` is never compared and the kernel reports the wrong max). Fixed by always launching 256 threads and using strided loops — inactive threads contribute `-FLT_MAX` and `0.0`, which are identity values for max and sum.
 
 ---
 
@@ -102,6 +102,6 @@ tests/test_correctness.py::TestSoftmax::test_oversized_input_raises          PAS
 All kernels within throughput thresholds.
 ```
 
-`vector_add` hits 82% of T4 peak bandwidth — expected for a purely memory-bound kernel. `reduce_sum` at 107 GB/s reflects the cost of the two-phase design; a CUB-backed reduction keeps partial sums on-device and gets closer to 250 GB/s. `matrix_mul` bandwidth is intentionally low — naive GEMM has poor arithmetic intensity and that's fine here; the point of this kernel is correctness at N=257, not peak FLOPS.
+`vector_add` hits 82% of T4 peak bandwidth expected for a purely memory-bound kernel. `reduce_sum` at 107 GB/s reflects the cost of the two-phase design; a CUB-backed reduction keeps partial sums on-device and gets closer to 250 GB/s. `matrix_mul` bandwidth is intentionally low — naive GEMM has poor arithmetic intensity and that's fine here; the point of this kernel is correctness at N=257, not peak FLOPS.
 
 ---

@@ -53,7 +53,7 @@ Everything passes at powers of two. 257 is where index math breaks.
 `__shfl_down_sync` for the final warp. No bank conflicts, no 
 unnecessary syncs.
 
-*softmax* — two-pass stable. exp(1000) is inf in FP32. The naive kernel fails this test.
+*softmax* : two-pass stable. exp(1000) is inf in FP32. The naive kernel fails this test.
 
 ---
 

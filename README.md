@@ -43,7 +43,7 @@ Kernels are compiled via `nvcc`, loaded into Python through `ctypes`, and checke
 
 **reduction** : parallel sum using shared-memory tree + `__shfl_down_sync` for the final warp. Warp-shuffle eliminates bank conflicts and redundant `__syncthreads` calls in the last 32 lanes.
 
-**softmax**: two-pass numerically stable implementation. Pass 1 computes `max(x)`, pass 2 computes `exp(x - max)` and normalizes. Naive softmax overflows at large logits — `exp(1000)` is `inf` in FP32, output becomes NaN. The test `test_numerical_stability_large_values` catches it.
+**softmax**: two-pass numerically stable implementation. Pass 1 computes `max(x)`, pass 2 computes `exp(x - max)` and normalizes. Naive softmax overflows at large logits `exp(1000)` is `inf` in FP32, output becomes NaN. The test `test_numerical_stability_large_values` catches it.
 
 ---
 

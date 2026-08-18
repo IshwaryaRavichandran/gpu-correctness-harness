@@ -44,8 +44,6 @@ the `.so`,  not wall-clock.
 
 ## Kernels
 
-## Kernels
-
 **vector_add** : N=256 and N=257 are not the same test. One fills 
 a block exactly. The other has a partial block where off-by-one in 
 ceiling division silently drops the last element.

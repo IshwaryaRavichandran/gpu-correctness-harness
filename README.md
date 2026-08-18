@@ -1,7 +1,5 @@
 # gpu-correctness-harness
 
-# gpu-correctness-harness
-
 CUDA kernels don't throw exceptions when they're wrong. A misaligned 
 tile boundary, a warp reading half the reduction, exp() overflowing 
 to inf, the output is just silently incorrect. This harness surfaces 
@@ -55,9 +53,7 @@ Everything passes at powers of two. 257 is where index math breaks.
 `__shfl_down_sync` for the final warp. No bank conflicts, no 
 unnecessary syncs.
 
-**softmax** : two-pass stable. exp(1000) is inf in FP32. 
-`test_numerical_stability_large_values` is the test that fails 
-against a naive implementation.
+**softmax** — two-pass stable. exp(1000) is inf in FP32. The naive kernel fails this test.
 ---
 
 ## Run it

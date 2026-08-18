@@ -1,6 +1,6 @@
 # gpu-correctness-harness
 
-CUDA kernels don't throw exceptions when they're wrong. A misaligned tile boundary, a warp reading half the reduction, exp() overflowing to inf — the output is just silently incorrect. This harness is built to surface those failure modes before they matter.
+CUDA kernels don't throw exceptions when they're wrong. A misaligned tile boundary, a warp reading half the reduction, exp() overflowing to inf, the output is just silently incorrect. This harness is built to surface those failure modes before they matter.
 
 Kernels are compiled via `nvcc`, loaded into Python through `ctypes`, and checked against NumPy CPU baselines. Timing runs through CUDA events inside the `.so` so benchmark numbers reflect actual device execution time, not Python overhead.
 
@@ -37,9 +37,9 @@ Kernels are compiled via `nvcc`, loaded into Python through `ctypes`, and checke
 
 ## Kernels
 
-**vector_add** : element-wise FP32 add, 1D grid, 256 threads/block. Tests at `N=1`, `N=256` (exact block boundary), and `N=1000` (non-power-of-two). Off-by-one in ceiling division silently drops the last element — no error, just a missing value.
+**vector_add** : element-wise FP32 add, 1D grid, 256 threads/block. Tests at `N=1`, `N=256` (exact block boundary), and `N=1000` (non-power-of-two). Off-by-one in ceiling division silently drops the last element no error, just a missing value.
 
-**matrix_mul** : square GEMM with 16×16 shared-memory tiling. Parameterized over `[16, 32, 64, 128, 257]`. Index math that looks correct at power-of-two sizes breaks at 257 — one past the tile boundary.
+**matrix_mul** : square GEMM with 16×16 shared-memory tiling. Parameterized over `[16, 32, 64, 128, 257]`. Index math that looks correct at power-of-two sizes breaks at 257, one past the tile boundary.
 
 **reduction** : parallel sum using shared-memory tree + `__shfl_down_sync` for the final warp. Warp-shuffle eliminates bank conflicts and redundant `__syncthreads` calls in the last 32 lanes.
 
@@ -102,7 +102,7 @@ tests/test_correctness.py::TestSoftmax::test_oversized_input_raises          PAS
   softmax (1024)          0.018 ms      0.9 GB/s
 ```
 
-`vector_add` at 263 GB/s is 82% of T4 peak — expected for a memory-bound kernel. `reduce_sum` at 107 GB/s reflects two-phase design cost; on-device reduction (CUB) gets closer to 250 GB/s. `matrix_mul` bandwidth is low by design — naive GEMM has poor arithmetic intensity, the relevant number here is correctness at N=257.
+`vector_add` at 263 GB/s is 82% of T4 peak, expected for a memory-bound kernel. `reduce_sum` at 107 GB/s reflects two-phase design cost; on-device reduction (CUB) gets closer to 250 GB/s. `matrix_mul` bandwidth is low by design, naive GEMM has poor arithmetic intensity; the relevant number here is correctness at N=257.
 
 ---
 

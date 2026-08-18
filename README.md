@@ -8,7 +8,7 @@ The harness compiles CUDA kernels via `nvcc`, loads them into Python through `ct
 
 ## What I was trying to learn
 
-I wanted to understand how GPU validation actually works at the systems level — not just writing kernels, but designing a harness that catches the bugs kernels are likely to have. Boundary-value analysis, dtype contract enforcement, numerical stability, and throughput regression are the same problems I've worked on in software test infrastructure, just one layer closer to the metal.
+I wanted to understand how GPU validation actually works at the systems level, not just writing kernels, but designing a harness that catches the bugs kernels are likely to have. Boundary-value analysis, dtype contract enforcement, numerical stability, and throughput regression are the same problems I've worked on in software test infrastructure, just one layer closer to the metal.
 
 Building this taught me where that intuition transfers directly and where GPU-specific knowledge (warp execution, shared memory layout, FP32 overflow behavior) changes the game.
 

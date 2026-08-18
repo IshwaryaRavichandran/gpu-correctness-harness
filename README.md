@@ -1,8 +1,15 @@
 # gpu-correctness-harness
 
-CUDA kernels don't throw exceptions when they're wrong. A misaligned tile boundary, a warp reading half the reduction, exp() overflowing to inf, the output is just silently incorrect. This harness is built to surface those failure modes before they matter.
+# gpu-correctness-harness
 
-Kernels are compiled via `nvcc`, loaded into Python through `ctypes`, and checked against NumPy CPU baselines. Timing runs through CUDA events inside the `.so` so benchmark numbers reflect actual device execution time, not Python overhead.
+CUDA kernels don't throw exceptions when they're wrong. A misaligned 
+tile boundary, a warp reading half the reduction, exp() overflowing 
+to inf, the output is just silently incorrect. This harness surfaces 
+those failure modes.
+
+Kernels compile via `nvcc`, load into Python through `ctypes`, and 
+get checked against NumPy baselines. Timing is CUDA events inside 
+the `.so`,  not wall-clock.
 
 ---
 
@@ -37,14 +44,22 @@ Kernels are compiled via `nvcc`, loaded into Python through `ctypes`, and checke
 
 ## Kernels
 
-**vector_add** : element-wise FP32 add, 1D grid, 256 threads/block. Tests at `N=1`, `N=256` (exact block boundary), and `N=1000` (non-power-of-two). Off-by-one in ceiling division silently drops the last element no error, just a missing value.
+## Kernels
 
-**matrix_mul** : square GEMM with 16×16 shared-memory tiling. Parameterized over `[16, 32, 64, 128, 257]`. Index math that looks correct at power-of-two sizes breaks at 257, one past the tile boundary.
+**vector_add** : N=256 and N=257 are not the same test. One fills 
+a block exactly. The other has a partial block where off-by-one in 
+ceiling division silently drops the last element.
 
-**reduction** : parallel sum using shared-memory tree + `__shfl_down_sync` for the final warp. Warp-shuffle eliminates bank conflicts and redundant `__syncthreads` calls in the last 32 lanes.
+**matrix_mul** : tiled GEMM parameterized over [16, 32, 64, 128, 257]. 
+Everything passes at powers of two. 257 is where index math breaks.
 
-**softmax**: two-pass numerically stable implementation. Pass 1 computes `max(x)`, pass 2 computes `exp(x - max)` and normalizes. Naive softmax overflows at large logits `exp(1000)` is `inf` in FP32, output becomes NaN. The test `test_numerical_stability_large_values` catches it.
+**reduction** : shared memory tree down to 32 lanes, then 
+`__shfl_down_sync` for the final warp. No bank conflicts, no 
+unnecessary syncs.
 
+**softmax** : two-pass stable. exp(1000) is inf in FP32. 
+`test_numerical_stability_large_values` is the test that fails 
+against a naive implementation.
 ---
 
 ## Run it
@@ -106,9 +121,7 @@ tests/test_correctness.py::TestSoftmax::test_oversized_input_raises          PAS
 
 ---
 
-## What's next
+## Next
 
-- FP16/BF16 kernel variants with tolerance-aware comparison
-- Online softmax for N > 1024
-- `nvtx` markers for Nsight Systems timeline visibility
-- GitHub Actions CI with GPU runner
+FP16/BF16 variants, online softmax past N=1024, nvtx markers 
+for Nsight timelines, CI with a GPU runner.

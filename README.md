@@ -1,63 +1,65 @@
 # gpu-correctness-harness
 
-A hands-on GPU validation project built to bridge my background in test infrastructure and hardware design into CUDA systems engineering.
+CUDA kernels don't throw exceptions when they're wrong. A misaligned tile boundary, a warp reading half the reduction, exp() overflowing to inf — the output is just silently incorrect. This harness is built to surface those failure modes before they matter.
 
-The harness compiles CUDA kernels via `nvcc`, loads them into Python through `ctypes`, and validates GPU output against NumPy CPU baselines, catching correctness failures at thread boundaries, tile edges, and numerical edge cases. Benchmark timing uses CUDA events inside the `.so`, not Python wall-clock.
-
----
-
-## What I was trying to learn
-
-I wanted to understand how GPU validation actually works at the systems level, not just writing kernels, but designing a harness that catches the bugs kernels are likely to have. Boundary-value analysis, dtype contract enforcement, numerical stability, and throughput regression are the same problems I've worked on in software test infrastructure, just one layer closer to the metal.
-
-Building this taught me where that intuition transfers directly and where GPU-specific knowledge (warp execution, shared memory layout, FP32 overflow behavior) changes the game.
+Kernels are compiled via `nvcc`, loaded into Python through `ctypes`, and checked against NumPy CPU baselines. Timing runs through CUDA events inside the `.so` so benchmark numbers reflect actual device execution time, not Python overhead.
 
 ---
 
-## Project layout
+## Architecture
 
 ```
-gpu-correctness-harness/
-├── kernels/
-│   ├── vector_add.cu       # element-wise FP32 add, 1D grid, 256 threads/block
-│   ├── matrix_mul.cu       # square GEMM with 16x16 shared-memory tiling
-│   ├── reduction.cu        # parallel sum — shared memory tree + warp-shuffle (__shfl_down_sync)
-│   └── softmax.cu          # numerically stable softmax, 2-pass shared-memory reduction
-├── src/
-│   └── cuda_wrapper.py     # ctypes loader, dtype/shape validation, timed entry points
-├── tests/
-│   └── test_correctness.py # 23 tests: correctness, boundary values, contract enforcement
-├── benchmarks/
-│   └── bench.py            # CUDA-event throughput benchmark + regression guard
-└── Makefile
++-----------------------------------------------------------------------+
+|                          PyTest Framework                             |
+|      (Boundary Analysis, Softmax Overflow, Edge-Case Vectors)         |
++-----------------------------------------------------------------------+
+                                  |
+                        (ctypes C-ABI Wrapper)
+                                  v
++-----------------------------------------------------------------------+
+|                  C++/CUDA Shared Library (.so)                        |
+|  +---------------------------------------------------------------+    |
+|  | CUDA Event Timer (Start → Launch Kernel → Stop)               |    |
+|  +---------------------------------------------------------------+    |
+|  | Kernels: vector_add | matrix_mul | reduction | softmax        |    |
+|  +---------------------------------------------------------------+    |
++-----------------------------------------------------------------------+
+                                  |
+                          (Device Execution)
+                                  v
++-----------------------------------------------------------------------+
+|                      NVIDIA GPU (T4)                                  |
+|         Warp-Shuffle Intrinsic (__shfl_down_sync) Execution           |
++-----------------------------------------------------------------------+
 ```
 
 ---
 
-## Kernels and what they test
+## Kernels
 
-**vector_add** : The baseline. Tests at `N=1`, `N=1000` (non-power-of-two), and `N=256` (exact block boundary). The boundary case is the one that matters: off-by-one in ceiling division silently drops the last element with no error message.
+**vector_add** : element-wise FP32 add, 1D grid, 256 threads/block. Tests at `N=1`, `N=256` (exact block boundary), and `N=1000` (non-power-of-two). Off-by-one in ceiling division silently drops the last element — no error, just a missing value.
 
-**matrix_mul** : Naive tiled GEMM, parameterized over `[16, 32, 64, 128, 257]`. The 257 case deliberately crosses the 256-thread tile boundary. Index math that looks correct at power-of-two sizes often breaks here.
+**matrix_mul** : square GEMM with 16×16 shared-memory tiling. Parameterized over `[16, 32, 64, 128, 257]`. Index math that looks correct at power-of-two sizes breaks at 257 — one past the tile boundary.
 
-**reduction** : Parallel sum using shared-memory tree reduction + `__shfl_down_sync` for the final warp. The warp-shuffle avoids unnecessary `__syncthreads` calls and shared memory bank conflicts in the last 32 lanes. Writing this kernel and its tests surfaced a real bug: the tree was stopping at `s > 32` instead of `s >= 32`, leaving 64 values where only 32 were being read by the warp — every result came back exactly half the correct answer. The N=256 boundary test caught it on the first run.
+**reduction** : parallel sum using shared-memory tree + `__shfl_down_sync` for the final warp. Warp-shuffle eliminates bank conflicts and redundant `__syncthreads` calls in the last 32 lanes.
 
-**softmax** : Two-pass numerically stable implementation. Pass 1 computes `max(x)` via shared-memory reduction. Pass 2 computes `exp(x[i] - max)` and normalizes. The test `test_numerical_stability_large_values` passes `[1000.0, 1001.0, 1002.0]` — inputs that cause `exp(1000)` to overflow to `inf` in FP32, making naive softmax return NaN. Testing this also uncovered a second bug: launching with `threads = N` for small N breaks tree reduction when N isn't a power of 2 (with `N=3`, `blockDim.x/2 = 1`, so `smem[2]` is never compared and the kernel reports the wrong max). Fixed by always launching 256 threads and using strided loops — inactive threads contribute `-FLT_MAX` and `0.0`, which are identity values for max and sum.
+**softmax**: two-pass numerically stable implementation. Pass 1 computes `max(x)`, pass 2 computes `exp(x - max)` and normalizes. Naive softmax overflows at large logits — `exp(1000)` is `inf` in FP32, output becomes NaN. The test `test_numerical_stability_large_values` catches it.
 
 ---
 
-## Build and run
+## Run it
 
 ```bash
-# Requires CUDA Toolkit 11.x+ and Python 3.10+
 make clean && make
 pytest tests/ -v
 python benchmarks/bench.py
 ```
 
+Requires CUDA Toolkit 11.x+ and Python 3.10+.
+
 ---
 
-## Results — NVIDIA T4, Google Colab
+## Results — NVIDIA T4
 
 **23/23 tests passing:**
 
@@ -89,7 +91,7 @@ tests/test_correctness.py::TestSoftmax::test_oversized_input_raises          PAS
 23 passed in 0.45s
 ```
 
-**Throughput benchmark** (CUDA events, warmup=5, runs=20, T4 peak ~320 GB/s):
+**Throughput** (CUDA events, warmup=5, runs=20, T4 peak ~320 GB/s):
 
 ```
   Kernel                 Avg ms    Bandwidth
@@ -98,10 +100,15 @@ tests/test_correctness.py::TestSoftmax::test_oversized_input_raises          PAS
   reduce_sum (16M)        0.629 ms    106.7 GB/s
   matrix_mul (512x512)    0.342 ms      9.2 GB/s
   softmax (1024)          0.018 ms      0.9 GB/s
-
-All kernels within throughput thresholds.
 ```
 
-`vector_add` hits 82% of T4 peak bandwidth expected for a purely memory-bound kernel. `reduce_sum` at 107 GB/s reflects the cost of the two-phase design; a CUB-backed reduction keeps partial sums on-device and gets closer to 250 GB/s. `matrix_mul` bandwidth is intentionally low — naive GEMM has poor arithmetic intensity and that's fine here; the point of this kernel is correctness at N=257, not peak FLOPS.
+`vector_add` at 263 GB/s is 82% of T4 peak — expected for a memory-bound kernel. `reduce_sum` at 107 GB/s reflects two-phase design cost; on-device reduction (CUB) gets closer to 250 GB/s. `matrix_mul` bandwidth is low by design — naive GEMM has poor arithmetic intensity, the relevant number here is correctness at N=257.
 
 ---
+
+## What's next
+
+- FP16/BF16 kernel variants with tolerance-aware comparison
+- Online softmax for N > 1024
+- `nvtx` markers for Nsight Systems timeline visibility
+- GitHub Actions CI with GPU runner

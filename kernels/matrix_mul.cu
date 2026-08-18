@@ -1,76 +1,57 @@
+
 #include <cuda_runtime.h>
-#include <stdio.h>
+#define TILE 16
 
-#define TILE_WIDTH 16
-
-extern "C" {
-
-__global__ void matrix_mul_tiled_kernel(const float* A, const float* B, float* C, int Width) {
-    __shared__ float s_A[TILE_WIDTH][TILE_WIDTH];
-    __shared__ float s_B[TILE_WIDTH][TILE_WIDTH];
-
-    int bx = blockIdx.x;  int by = blockIdx.y;
-    int tx = threadIdx.x; int ty = threadIdx.y;
-
-    int Row = by * TILE_WIDTH + ty;
-    int Col = bx * TILE_WIDTH + tx;
-
-    float Pvalue = 0.0f;
-
-    for (int ph = 0; ph < (Width + TILE_WIDTH - 1) / TILE_WIDTH; ++ph) {
-        if (Row < Width && (ph * TILE_WIDTH + tx) < Width)
-            s_A[ty][tx] = A[Row * Width + ph * TILE_WIDTH + tx];
-        else
-            s_A[ty][tx] = 0.0f;
-
-        if (Col < Width && (ph * TILE_WIDTH + ty) < Width)
-            s_B[ty][tx] = B[(ph * TILE_WIDTH + ty) * Width + Col];
-        else
-            s_B[ty][tx] = 0.0f;
-
+__global__ void matrix_mul_kernel(const float* A, const float* B, float* C, int N) {
+    __shared__ float tA[TILE][TILE];
+    __shared__ float tB[TILE][TILE];
+    int row = blockIdx.y * TILE + threadIdx.y;
+    int col = blockIdx.x * TILE + threadIdx.x;
+    float sum = 0.0f;
+    for (int t = 0; t < (N + TILE - 1) / TILE; ++t) {
+        tA[threadIdx.y][threadIdx.x] = (row < N && t*TILE+threadIdx.x < N)
+            ? A[row*N + t*TILE+threadIdx.x] : 0.0f;
+        tB[threadIdx.y][threadIdx.x] = (col < N && t*TILE+threadIdx.y < N)
+            ? B[(t*TILE+threadIdx.y)*N + col] : 0.0f;
         __syncthreads();
-
-        for (int k = 0; k < TILE_WIDTH; ++k) {
-            Pvalue += s_A[ty][k] * s_B[k][tx];
-        }
-
+        for (int k = 0; k < TILE; ++k) sum += tA[threadIdx.y][k] * tB[k][threadIdx.x];
         __syncthreads();
     }
-
-    if (Row < Width && Col < Width) {
-        C[Row * Width + Col] = Pvalue;
-    }
+    if (row < N && col < N) C[row*N + col] = sum;
 }
 
-int launch_matrix_mul(const float* h_A, const float* h_B, float* h_C, int N) {
-    size_t bytes = N * N * sizeof(float);
-    float *d_A = nullptr, *d_B = nullptr, *d_C = nullptr;
-
-    if (cudaMalloc(&d_A, bytes) != cudaSuccess) return -1;
-    if (cudaMalloc(&d_B, bytes) != cudaSuccess) return -2;
-    if (cudaMalloc(&d_C, bytes) != cudaSuccess) return -3;
-
-    cudaMemcpy(d_A, h_A, bytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B, bytes, cudaMemcpyHostToDevice);
-
-    dim3 dimBlock(TILE_WIDTH, TILE_WIDTH);
-    dim3 dimGrid((N + TILE_WIDTH - 1) / TILE_WIDTH, (N + TILE_WIDTH - 1) / TILE_WIDTH);
-
-    matrix_mul_tiled_kernel<<<dimGrid, dimBlock>>>(d_A, d_B, d_C, N);
-
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
-        return -4;
-    }
-
-    cudaMemcpy(h_C, d_C, bytes, cudaMemcpyDeviceToHost);
-
-    cudaFree(d_A);
-    cudaFree(d_B);
-    cudaFree(d_C);
-
-    return 0;
+extern "C" void matrix_mul(const float* h_A, const float* h_B, float* h_C, int N) {
+    float *d_A, *d_B, *d_C;
+    size_t sz = N * N * sizeof(float);
+    cudaMalloc(&d_A, sz); cudaMalloc(&d_B, sz); cudaMalloc(&d_C, sz);
+    cudaMemcpy(d_A, h_A, sz, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B, sz, cudaMemcpyHostToDevice);
+    dim3 threads(TILE, TILE);
+    dim3 blocks((N+TILE-1)/TILE, (N+TILE-1)/TILE);
+    matrix_mul_kernel<<<blocks, threads>>>(d_A, d_B, d_C, N);
+    cudaDeviceSynchronize();
+    cudaMemcpy(h_C, d_C, sz, cudaMemcpyDeviceToHost);
+    cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
 }
 
+extern "C" float timed_matrix_mul(const float* h_A, const float* h_B, float* h_C, int N) {
+    float *d_A, *d_B, *d_C;
+    size_t sz = N * N * sizeof(float);
+    cudaMalloc(&d_A, sz); cudaMalloc(&d_B, sz); cudaMalloc(&d_C, sz);
+    cudaMemcpy(d_A, h_A, sz, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B, sz, cudaMemcpyHostToDevice);
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start); cudaEventCreate(&stop);
+    dim3 threads(TILE, TILE);
+    dim3 blocks((N+TILE-1)/TILE, (N+TILE-1)/TILE);
+    cudaEventRecord(start);
+    matrix_mul_kernel<<<blocks, threads>>>(d_A, d_B, d_C, N);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float ms = 0.0f;
+    cudaEventElapsedTime(&ms, start, stop);
+    cudaMemcpy(h_C, d_C, sz, cudaMemcpyDeviceToHost);
+    cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+    cudaEventDestroy(start); cudaEventDestroy(stop);
+    return ms;
 }

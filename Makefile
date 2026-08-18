@@ -1,11 +1,23 @@
-NVCC = nvcc
-CFLAGS = -Xcompiler -fPIC -shared -O3
+NVCC      = nvcc
+NVCCFLAGS = -O2 -shared -Xcompiler -fPIC --std=c++14
 
-all: build/libcuda_correctness.so
+BUILD_DIR = build
+LIB       = $(BUILD_DIR)/libkernels.so
 
-build/libcuda_correctness.so: kernels/vector_add.cu kernels/matrix_mul.cu
-	mkdir -p build
-	$(NVCC) $(CFLAGS) kernels/vector_add.cu kernels/matrix_mul.cu -o build/libcuda_correctness.so
+SRCS = kernels/vector_add.cu \
+       kernels/matrix_mul.cu \
+       kernels/reduction.cu  \
+       kernels/softmax.cu
+
+.PHONY: all clean
+
+all: $(BUILD_DIR) $(LIB)
+
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+$(LIB): $(SRCS)
+	$(NVCC) $(NVCCFLAGS) -o $@ $^
 
 clean:
-	rm -rf build/
+	rm -rf $(BUILD_DIR)

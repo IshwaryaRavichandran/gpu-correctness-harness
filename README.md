@@ -1,15 +1,8 @@
-# gpu-correctness-harness
+# GPU Correctness Harness
 
-CUDA kernels don't throw exceptions when they're wrong. A misaligned 
-tile boundary, a warp reading half the reduction, exp() overflowing 
-to inf, the output is just silently incorrect. This harness surfaces 
-those failure modes.
+CUDA kernels don't throw exceptions when they're wrong. A misaligned tile boundary, a warp reading half the reduction, exp() overflowing to inf—the output is just silently incorrect. This harness surfaces those failure modes.
 
-Kernels compile via `nvcc`, load into Python through `ctypes`, and 
-get checked against NumPy baselines. Timing is CUDA events inside 
-the `.so`,  not wall-clock.
-
----
+Kernels compile via nvcc, load into Python through ctypes, and get checked against NumPy baselines. Timing measurements use CUDA events inside the compiled library, not wall-clock.
 
 ## Architecture
 
@@ -38,40 +31,52 @@ the `.so`,  not wall-clock.
 +-----------------------------------------------------------------------+
 ```
 
----
+## Kernel Coverage
 
-## Kernels
+### Vector Add
+N=256 and N=257 are not the same test. One fills a block exactly. The other has a partial block where off-by-one in ceiling division silently drops the last element.
 
-**vector_add** : N=256 and N=257 are not the same test. One fills 
-a block exactly. The other has a partial block where off-by-one in 
-ceiling division silently drops the last element.
+### Matrix Multiply
+A tiled GEMM parameterized over tile sizes [16, 32, 64, 128, 257]. Everything passes at powers of two. 257 is where index math breaks.
 
-**matrix_mul** : tiled GEMM parameterized over [16, 32, 64, 128, 257]. 
-Everything passes at powers of two. 257 is where index math breaks.
+### Reduction
+Shared memory tree down to 32 lanes, then __shfl_down_sync for the final warp. No bank conflicts, no unnecessary syncs.
 
-**reduction** : shared memory tree down to 32 lanes, then 
-`__shfl_down_sync` for the final warp. No bank conflicts, no 
-unnecessary syncs.
+### Softmax
+Two-pass stable algorithm. exp(1000) is inf in FP32. The naive kernel fails this test.
 
-*softmax* : two-pass stable. exp(1000) is inf in FP32. The naive kernel fails this test.
+## Getting Started
 
----
+### Requirements
 
-## Run it
+* CUDA Toolkit 11.x or higher
+* Python 3.10 or higher
+* Make build system
+* NVIDIA GPU (tested on T4)
+
+### Build & Test
+
+Clean build:
 
 ```bash
 make clean && make
+```
+
+Run the full test suite:
+
+```bash
 pytest tests/ -v
+```
+
+Run performance benchmarks:
+
+```bash
 python benchmarks/bench.py
 ```
 
-Requires CUDA Toolkit 11.x+ and Python 3.10+.
+## Test Results
 
----
-
-## Results — NVIDIA T4
-
-**23/23 tests passing:**
+All 23 tests passing on NVIDIA T4:
 
 ```
 tests/test_correctness.py::TestVectorAdd::test_equivalence_random            PASSED
@@ -101,22 +106,39 @@ tests/test_correctness.py::TestSoftmax::test_oversized_input_raises          PAS
 23 passed in 0.45s
 ```
 
-**Throughput** (CUDA events, warmup=5, runs=20, T4 peak ~320 GB/s):
+## Performance Benchmarks
 
-```
-  Kernel                 Avg ms    Bandwidth
-  ----------------------------------------------------
-  vector_add (16M)        0.765 ms    263.2 GB/s
-  reduce_sum (16M)        0.629 ms    106.7 GB/s
-  matrix_mul (512x512)    0.342 ms      9.2 GB/s
-  softmax (1024)          0.018 ms      0.9 GB/s
-```
+CUDA event timing with warmup=5, 20 runs per kernel. NVIDIA T4 peak bandwidth is approximately 320 GB/s.
 
-`vector_add` at 263 GB/s is 82% of T4 peak, expected for a memory-bound kernel. `reduce_sum` at 107 GB/s reflects two-phase design cost; on-device reduction (CUB) gets closer to 250 GB/s. `matrix_mul` bandwidth is low by design, naive GEMM has poor arithmetic intensity; the relevant number here is correctness at N=257.
+| Kernel | Input Size | Avg Time | Bandwidth |
+|--------|-----------|----------|-----------|
+| vector_add | 16M elements | 0.765 ms | 263.2 GB/s |
+| reduce_sum | 16M elements | 0.629 ms | 106.7 GB/s |
+| matrix_mul | 512x512 | 0.342 ms | 9.2 GB/s |
+| softmax | 1024 | 0.018 ms | 0.9 GB/s |
 
----
+### Performance Notes
 
-## Next
+Vector add achieves 263 GB/s, which is 82% of T4 peak. This is expected for a memory-bound kernel.
 
-FP16/BF16 variants, online softmax past N=1024, nvtx markers 
-for Nsight timelines, CI with a GPU runner.
+Reduce sum achieves 107 GB/s. The two-phase design adds overhead. Specialized libraries like CUB achieve closer to 250 GB/s with fused algorithms.
+
+Matrix multiply bandwidth is intentionally low. This is a naive GEMM with poor arithmetic intensity. The relevant metric here is correctness at edge cases like N=257, not peak performance.
+
+## Roadmap
+
+* FP16 and BF16 kernel variants
+* Online softmax algorithm for sequences beyond N=1024
+* NVTX markers for Nsight timeline profiling
+* CI integration with GPU runner
+
+## Key Takeaways
+
+This harness validates CUDA kernel correctness across:
+* Non-power-of-two dimensions
+* Boundary conditions and partial blocks
+* Numerical stability under extreme values
+* Warp-level synchronization and memory safety
+* Real-world edge case dimensions (257 is not random)
+
+The goal is to catch silent failures before they reach production, validating both the kernel logic and the infrastructure that wraps it.

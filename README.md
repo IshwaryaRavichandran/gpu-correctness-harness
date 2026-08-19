@@ -1,6 +1,6 @@
 # GPU Correctness Harness
 
-CUDA kernels don't throw exceptions when they're wrong. A misaligned tile boundary, a warp reading half the reduction, exp() overflowing to inf—the output is just silently incorrect. This harness surfaces those failure modes.
+CUDA kernels don't throw exceptions when they're wrong. A misaligned tile boundary, a warp reading half the reduction, exp() overflowing to inf - the output is just silently incorrect. This harness surfaces those failure modes.
 
 Kernels compile via nvcc, load into Python through ctypes, and get checked against NumPy baselines. Timing measurements use CUDA events inside the compiled library, not wall-clock.
 
